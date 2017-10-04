@@ -27,6 +27,9 @@ const joiSchema = {
         }).when('logSource', { is: 'dmd', then: joi.required() }),
     },
     log: logJoi,
+    metrics: {
+        topic: joi.string().required(),
+    },
     extensions: {
         replication: {
             source: {
@@ -83,6 +86,13 @@ const joiSchema = {
                 concurrency: joi.number().greater(0).default(10),
             },
         },
+    },
+    server: {
+        healthChecks: joi.object({
+            allowFrom: joi.array().items(joi.string()).default([]),
+        }).required(),
+        host: joi.string().required(),
+        port: joi.number().default(8900),
     },
 };
 
