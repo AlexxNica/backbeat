@@ -567,6 +567,10 @@ class S3Mock extends TestConfigurator {
     }
 }
 
+class MetricsMock {
+    publishMetrics() {}
+}
+
 /* eslint-enable max-len */
 
 describe('queue processor functional tests with mocking', () => {
@@ -577,6 +581,7 @@ describe('queue processor functional tests with mocking', () => {
     before(() => {
         const serverList =
                   constants.target.hosts.map(h => `${h.host}:${h.port}`);
+
         queueProcessor = new QueueProcessor(
             {} /* zkConfig not needed */,
             { auth: { type: 'role',
@@ -591,13 +596,39 @@ describe('queue processor functional tests with mocking', () => {
                     site: 'sf', servers: serverList,
                 }],
                 transport: 'http' },
-            { queueProcessor: {
-                retryTimeoutS: 5,
-                // groupId not needed for tests
-            } });
+            { topic: 'backbeat-func-test-dummy-topic',
+              replicationStatusTopic: 'backbeat-func-test-repstatus',
+              queueProcessor: {
+                  retryTimeoutS: 5,
+                  groupId: 'backbeat-func-test-group-id',
+              },
+            },
+            new MetricsMock());
 
-        // don't call start() on the queue processor, so that we don't
-        // attempt to fetch entries from kafka
+        queueProcessor.start({ disableConsumer: true });
+        // create the replication status processor only when the queue
+        // processor is ready, so that we ensure the replication
+        // status topic is created, otherwise the consumer may be
+        // stuck waiting for entries.
+        queueProcessor.on('ready', () => {
+            replicationStatusProcessor = new ReplicationStatusProcessor(
+                { connectionString: 'localhost:2181' },
+                { auth: { type: 'role',
+                          vault: { host: constants.source.vault,
+                                   port: 7777 } },
+                  s3: { host: constants.source.s3,
+                        port: 7777 },
+                  transport: 'http',
+                },
+                { replicationStatusTopic: 'backbeat-func-test-repstatus',
+                  replicationStatusProcessor: {
+                      retryTimeoutS: 5,
+                      groupId: 'backbeat-func-test-group-id',
+                  },
+                });
+            replicationStatusProcessor.start();
+            replicationStatusProcessor.bootstrapKafkaConsumer(done);
+        });
 
         s3mock = new S3Mock();
         httpServer = http.createServer(

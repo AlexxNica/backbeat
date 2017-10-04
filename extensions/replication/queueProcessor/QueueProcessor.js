@@ -9,8 +9,8 @@ const RoundRobin = require('arsenal').network.RoundRobin;
 
 const BackbeatConsumer = require('../../../lib/BackbeatConsumer');
 const VaultClientCache = require('../../../lib/clients/VaultClientCache');
-const QueueEntry = require('../utils/QueueEntry');
-const ReplicationTaskScheduler = require('./ReplicationTaskScheduler');
+const QueueEntry = require('../../../lib/models/QueueEntry');
+const ReplicationTaskScheduler = require('../utils/ReplicationTaskScheduler');
 const ReplicateObject = require('../tasks/ReplicateObject');
 const MultipleBackendTask = require('../tasks/MultipleBackendTask');
 const EchoBucket = require('../tasks/EchoBucket');
@@ -18,7 +18,12 @@ const EchoBucket = require('../tasks/EchoBucket');
 const ObjectQueueEntry = require('../utils/ObjectQueueEntry');
 const BucketQueueEntry = require('../utils/BucketQueueEntry');
 
-const { proxyVaultPath, proxyIAMPath } = require('../constants');
+const {
+    proxyVaultPath,
+    proxyIAMPath,
+    metricsExtension,
+    metricsTypeProcessed,
+} = require('../constants');
 
 /**
 * Given that the largest object JSON from S3 is about 1.6 MB and adding some
@@ -38,7 +43,7 @@ class QueueProcessor {
      *
      * @constructor
      * @param {Object} zkConfig - zookeeper configuration object
-     * @param {string} zkConfig.connectionString - zookeeper connection string
+     * @param {String} zkConfig.connectionString - zookeeper connection string
      *   as "host:port[/chroot]"
      * @param {Object} sourceConfig - source S3 configuration
      * @param {Object} sourceConfig.s3 - s3 endpoint configuration object
@@ -54,12 +59,15 @@ class QueueProcessor {
      * @param {String} repConfig.queueProcessor.retryTimeoutS -
      *   number of seconds before giving up retries of an entry
      *   replication
+     * @param {MetricsProducer} mProducer - instance of metrics producer
      */
-    constructor(zkConfig, sourceConfig, destConfig, repConfig) {
+    constructor(zkConfig, sourceConfig, destConfig, repConfig, mProducer) {
+        super();
         this.zkConfig = zkConfig;
         this.sourceConfig = sourceConfig;
         this.destConfig = destConfig;
         this.repConfig = repConfig;
+        this._mProducer = mProducer;
         this.destHosts = null;
         this.sourceAdminVaultConfigured = false;
         this.destAdminVaultConfigured = false;
@@ -186,20 +194,56 @@ class QueueProcessor {
         };
     }
 
-    start() {
-        const consumer = new BackbeatConsumer({
-            zookeeper: { connectionString: this.zkConfig.connectionString },
-            topic: this.repConfig.topic,
-            groupId: this.repConfig.queueProcessor.groupId,
-            concurrency: this.repConfig.queueProcessor.concurrency,
-            queueProcessor: this.processKafkaEntry.bind(this),
-            fetchMaxBytes: CONSUMER_FETCH_MAX_BYTES,
-        });
-        consumer.on('error', () => {});
-        consumer.subscribe();
+    /**
+     * Start kafka consumer and producer. Emits a 'ready' even when
+     * producer and consumer are ready.
+     *
+     * Note: for tests, with auto.create.topics.enable option set on
+     * kafka container, this will also pre-create the topic.
+     *
+     * @param {object} [options] options object
+     * @param {boolean} [options.disableConsumer] - true to disable
+     *   startup of consumer (for testing: one has to call
+     *   processQueueEntry() explicitly)
+     * @return {undefined}
+     */
+    start(options) {
+        this._setupProducer(err => {
+            if (err) {
+                this.logger.info('error setting up kafka producer',
+                                 { error: err.message });
+                return undefined;
+            }
+            if (!(options && options.disableConsumer)) {
+                this._consumer = new BackbeatConsumer({
+                    zookeeper: {
+                        connectionString: this.zkConfig.connectionString,
+                    },
+                    topic: this.repConfig.topic,
+                    groupId: this.repConfig.queueProcessor.groupId,
+                    concurrency: this.repConfig.queueProcessor.concurrency,
+                    queueProcessor: this.processKafkaEntry.bind(this),
+                    fetchMaxBytes: CONSUMER_FETCH_MAX_BYTES,
+                });
+                this._consumer.on('error', () => {});
+                this._consumer.subscribe();
 
-        this.logger.info('queue processor is ready to consume ' +
-                         'replication entries');
+                this._consumer.on('metrics', data => {
+                    // i.e. data = { my-bucket: { ops: 1, bytes: 124 } }
+                    this._mProducer.publishMetrics(data, metricsTypeProcessed,
+                        metricsExtension, err => {
+                            this.logger.trace('error occurred in publishing ' +
+                            'metrics', {
+                                error: err,
+                                method: 'QueueProcessor.start',
+                            });
+                        });
+                });
+            }
+            this.logger.info('queue processor is ready to consume ' +
+                             'replication entries');
+            return this.emit('ready');
+        });
     }
 
     /**
@@ -213,6 +257,9 @@ class QueueProcessor {
      * @return {undefined}
      */
     processKafkaEntry(kafkaEntry, done) {
+        if (kafkaEntry.key && kafkaEntry.key.startsWith('deephealthcheck')) {
+            return process.nextTick(() => done());
+        }
         const sourceEntry = QueueEntry.createFromKafkaEntry(kafkaEntry);
         if (sourceEntry.error) {
             this.logger.error('error processing source entry',
