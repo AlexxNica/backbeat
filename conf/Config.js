@@ -77,6 +77,11 @@ class Config {
                 ca: ca ? fs.readFileSync(capath, 'ascii') : undefined,
             };
         }
+
+        // default to standalone configuration if sentinel not setup
+        if (config.redis && !config.redis.sentinels) {
+            this.redis = { host: '127.0.0.1', port: 6379 };
+        }
     }
 
     _loadAdminCredentialsFromFile(filePath) {

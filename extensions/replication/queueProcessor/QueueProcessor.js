@@ -11,7 +11,7 @@ const RoundRobin = require('arsenal').network.RoundRobin;
 const BackbeatProducer = require('../../../lib/BackbeatProducer');
 const BackbeatConsumer = require('../../../lib/BackbeatConsumer');
 const VaultClientCache = require('../../../lib/clients/VaultClientCache');
-const QueueEntry = require('../utils/QueueEntry');
+const QueueEntry = require('../../../lib/models/QueueEntry');
 const ReplicationTaskScheduler = require('../utils/ReplicationTaskScheduler');
 const ReplicateObject = require('../tasks/ReplicateObject');
 const MultipleBackendTask = require('../tasks/MultipleBackendTask');
@@ -20,7 +20,12 @@ const EchoBucket = require('../tasks/EchoBucket');
 const ObjectQueueEntry = require('../utils/ObjectQueueEntry');
 const BucketQueueEntry = require('../utils/BucketQueueEntry');
 
-const { proxyVaultPath, proxyIAMPath } = require('../constants');
+const {
+    proxyVaultPath,
+    proxyIAMPath,
+    metricsExtension,
+    metricsTypeProcessed,
+} = require('../constants');
 
 /**
 * Given that the largest object JSON from S3 is about 1.6 MB and adding some
@@ -40,7 +45,7 @@ class QueueProcessor extends EventEmitter {
      *
      * @constructor
      * @param {Object} zkConfig - zookeeper configuration object
-     * @param {string} zkConfig.connectionString - zookeeper connection string
+     * @param {String} zkConfig.connectionString - zookeeper connection string
      *   as "host:port[/chroot]"
      * @param {Object} sourceConfig - source S3 configuration
      * @param {Object} sourceConfig.s3 - s3 endpoint configuration object
@@ -56,13 +61,15 @@ class QueueProcessor extends EventEmitter {
      * @param {String} repConfig.queueProcessor.retryTimeoutS -
      *   number of seconds before giving up retries of an entry
      *   replication
+     * @param {MetricsProducer} mProducer - instance of metrics producer
      */
-    constructor(zkConfig, sourceConfig, destConfig, repConfig) {
+    constructor(zkConfig, sourceConfig, destConfig, repConfig, mProducer) {
         super();
         this.zkConfig = zkConfig;
         this.sourceConfig = sourceConfig;
         this.destConfig = destConfig;
         this.repConfig = repConfig;
+        this._mProducer = mProducer;
         this.destHosts = null;
         this.sourceAdminVaultConfigured = false;
         this.destAdminVaultConfigured = false;
@@ -244,6 +251,18 @@ class QueueProcessor extends EventEmitter {
                 });
                 this._consumer.on('error', () => {});
                 this._consumer.subscribe();
+
+                this._consumer.on('metrics', data => {
+                    // i.e. data = { my-bucket: { ops: 1, bytes: 124 } }
+                    this._mProducer.publishMetrics(data, metricsTypeProcessed,
+                        metricsExtension, err => {
+                            this.logger.trace('error occurred in publishing ' +
+                            'metrics', {
+                                error: err,
+                                method: 'QueueProcessor.start',
+                            });
+                        });
+                });
             }
             this.logger.info('queue processor is ready to consume ' +
                              'replication entries');

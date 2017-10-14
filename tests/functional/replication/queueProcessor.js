@@ -572,6 +572,10 @@ class S3Mock extends TestConfigurator {
     }
 }
 
+class MetricsMock {
+    publishMetrics() {}
+}
+
 /* eslint-enable max-len */
 
 describe('queue processor functional tests with mocking', () => {
@@ -584,6 +588,7 @@ describe('queue processor functional tests with mocking', () => {
         this.timeout(60000);
         const serverList =
                   constants.target.hosts.map(h => `${h.host}:${h.port}`);
+
         queueProcessor = new QueueProcessor(
             { connectionString: 'localhost:2181' },
             { auth: { type: 'role',
@@ -604,7 +609,9 @@ describe('queue processor functional tests with mocking', () => {
                   retryTimeoutS: 5,
                   groupId: 'backbeat-func-test-group-id',
               },
-            });
+            },
+            new MetricsMock());
+
         queueProcessor.start({ disableConsumer: true });
         // create the replication status processor only when the queue
         // processor is ready, so that we ensure the replication

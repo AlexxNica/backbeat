@@ -20,6 +20,9 @@
             "port": 9990
         }
     },
+    "metrics": {
+        "topic": "backbeat-metrics"
+    },
     "extensions": {
         "replication": {
             "source": {
@@ -72,5 +75,9 @@
     "log": {
         "logLevel": "info",
         "dumpLevel": "error"
+    },
+    "redis": {
+        "name": "backbeat",
+        "password": ""
     }
 }
