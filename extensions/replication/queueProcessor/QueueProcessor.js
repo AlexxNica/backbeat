@@ -1,12 +1,14 @@
 'use strict'; // eslint-disable-line
 
 const http = require('http');
+const { EventEmitter } = require('events');
 
 const Logger = require('werelogs').Logger;
 
 const errors = require('arsenal').errors;
 const RoundRobin = require('arsenal').network.RoundRobin;
 
+const BackbeatProducer = require('../../../lib/BackbeatProducer');
 const BackbeatConsumer = require('../../../lib/BackbeatConsumer');
 const VaultClientCache = require('../../../lib/clients/VaultClientCache');
 const QueueEntry = require('../../../lib/models/QueueEntry');
@@ -34,7 +36,7 @@ const {
 */
 const CONSUMER_FETCH_MAX_BYTES = 5000020;
 
-class QueueProcessor {
+class QueueProcessor extends EventEmitter {
 
     /**
      * Create a queue processor object to activate Cross-Region
@@ -71,6 +73,8 @@ class QueueProcessor {
         this.destHosts = null;
         this.sourceAdminVaultConfigured = false;
         this.destAdminVaultConfigured = false;
+        this.replicationStatusProducer = null;
+        this._consumer = null;
 
         this.echoMode = false;
 
@@ -158,6 +162,25 @@ class QueueProcessor {
         }
     }
 
+    _setupProducer(done) {
+        const producer = new BackbeatProducer({
+            zookeeper: { connectionString: this.zkConfig.connectionString },
+            topic: this.repConfig.replicationStatusTopic,
+        });
+        producer.once('error', done);
+        producer.once('ready', () => {
+            producer.removeAllListeners('error');
+            producer.on('error', err => {
+                this.log.error('error from backbeat producer', {
+                    topic: this.repConfig.replicationStatusTopic,
+                    error: err,
+                });
+            });
+            this.replicationStatusProducer = producer;
+            done();
+        });
+    }
+
     _setupEcho() {
         if (!this.sourceAdminVaultConfigured) {
             throw new Error('echo mode not properly configured: missing ' +
@@ -190,6 +213,7 @@ class QueueProcessor {
             destHTTPAgent: this.destHTTPAgent,
             vaultclientCache: this.vaultclientCache,
             accountCredsCache: this.accountCredsCache,
+            replicationStatusProducer: this.replicationStatusProducer,
             logger: this.logger,
         };
     }

@@ -6,6 +6,7 @@
   "scripts": {
     "queue_populator": "node bin/queuePopulator.js",
     "queue_processor": "node extensions/replication/queueProcessor/task.js",
+    "replication_status_processor": "node extensions/replication/replicationStatusProcessor/task.js",
     "test": "mocha --recursive tests/unit",
     "ft_test": "mocha --recursive $(find tests/functional -name '*.js' ! -name 'BackbeatServer.js')",
     "ft_server_test": "mocha tests/functional/api/BackbeatServer.js",
