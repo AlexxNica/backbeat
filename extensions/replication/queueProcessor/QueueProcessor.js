@@ -271,6 +271,26 @@ class QueueProcessor extends EventEmitter {
     }
 
     /**
+     * Stop kafka producer and consumer and commit current consumer
+     * offset
+     *
+     * @param {function} done - callback
+     * @return {undefined}
+     */
+    stop(done) {
+        if (!this.replicationStatusProducer) {
+            return setImmediate(done);
+        }
+        return this.replicationStatusProducer.close(() => {
+            if (this._consumer) {
+                this._consumer.close(done);
+            } else {
+                done();
+            }
+        });
+    }
+
+    /**
      * Proceed to the replication of an object given a kafka
      * replication queue entry
      *
