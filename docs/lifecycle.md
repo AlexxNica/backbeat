@@ -91,8 +91,9 @@ from bucket *foobucket*:
 
 #### Zookeeper paths
 
-* /[chroot_path]/lifecycle/buckets
-* /[chroot_path]/lifecycle/queuedBuckets
+* /[chroot_path]/lifecycle/data/buckets/${ownerId}:${bucket}
+* /[chroot_path]/lifecycle/run/queuedBuckets/${ownerId}:${bucket}
+* /[chroot_path]/lifecycle/run/conductorLock
 
 ### S3 Connector
 
@@ -119,7 +120,7 @@ buckets are processed.
 The list of buckets is stored in zookeeper nodes with the path:
 
 ```
-[/chroot_path]/lifecycle/buckets/${ownerId}:${bucket}
+[/chroot_path]/lifecycle/data/buckets/${ownerId}:${bucket}
 ```
 
 * **ownerId** is the canonical ID of the bucket owner
@@ -148,16 +149,18 @@ metadata log has been processed.
 
 The conductor role is to periodically do the following:
 
+* create a zookeeper node at `/[chroot_path]/lifecycle/run/conductorLock`
+  with EPHEMERAL flag (so that it gets cleaned up automatically in
+  case the zookeeper client session expires)
+  * if ZNODEEXISTS error is returned, it's already being processed by
+    another conductor instance, so do nothing until the next cron
+    iteration
 * get the list of buckets with potential lifecycle actions enabled
   from zookeeper (getChildren in zookeeper API)
-
 * for each of them, do the following:
-
   * create a zookeeper node at
-    `/[chroot_path]/lifecycle/queuedBuckets/${ownerId}:${bucket}` with
-    EPHEMERAL flag (so that it gets cleaned up automatically in case
-    the zookeeper client session expires), i.e. mark the bucket as
-    being queued
+    `/[chroot_path]/lifecycle/run/queuedBuckets/${ownerId}:${bucket}`
+    with EPHEMERAL flag, i.e. mark the bucket as being queued
     * If ZNODEEXISTS error is returned, it's already queued, so stop
       and go on with the next bucket
   * publish a message to the kafka topic
