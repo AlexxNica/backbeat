@@ -147,7 +147,7 @@ metadata log has been processed.
 
 ### Conductor
 
-The conductor role is to periodically do the following:
+The conductor role is to periodically do the following (cron-style task):
 
 * create a zookeeper node at `/[chroot_path]/lifecycle/run/conductorLock`
   with EPHEMERAL flag (so that it gets cleaned up automatically in
@@ -166,6 +166,7 @@ The conductor role is to periodically do the following:
   * publish a message to the kafka topic
     *backbeat-lifecycle-bucket-tasks* (see [bucket tasks](#bucket-tasks)
     message format)
+* remove the `conductorLock` node
 
 The conductor will only generate messages to *start* a new
 listing. Later on, if the listing is truncated, new messages will be
